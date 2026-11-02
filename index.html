@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digital Clock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --c: #39ff88;
+    --bg: #0b0f14;
+    --fs: 110px;
+    --op: .85;
+    --font: 'Orbitron', 'Segoe UI', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--c);
+    font-family: var(--font);
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    user-select: none;
+  }
+  #stage { position: fixed; inset: 0; }
+
+  #clock {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    padding: .25em .45em .3em;
+    border-radius: 22px;
+    background: rgba(22, 28, 38, var(--op));
+    border: 1px solid rgba(255, 255, 255, calc(.08 * var(--op)));
+    text-align: center;
+    cursor: grab;
+    font-size: var(--fs);
+    line-height: 1.1;
+    white-space: nowrap;
+    touch-action: none;
+  }
+  #clock.dragging { cursor: grabbing; }
+  #time {
+    font-size: 1em;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .02em;
+    text-shadow: 0 0 .25em color-mix(in srgb, var(--c) 55%, transparent);
+  }
+  #time i { font-style: normal; opacity: .75; padding: 0 .04em; }
+  #time .ap { font-size: .3em; margin-left: .3em; opacity: .85; letter-spacing: .05em; }
+  #date { font-size: .17em; margin-top: .35em; opacity: .85; letter-spacing: .08em; text-transform: uppercase; }
+  #tzl  { font-size: .12em; margin-top: .4em; opacity: .55; letter-spacing: .12em; text-transform: uppercase; }
+
+  /* Floating (Picture-in-Picture) mode */
+  #clock.pip {
+    position: static !important;
+    transform: none !important;
+    border: 0; border-radius: 0;
+    background: transparent;
+    font-size: min(12vw, 32vh);
+    cursor: default;
+    width: 100%;
+    padding: 0;
+  }
+
+  /* Controls */
+  #bar {
+    position: fixed; top: 12px; right: 12px;
+    display: flex; gap: 8px;
+    transition: opacity .3s;
+    z-index: 10;
+  }
+  body.idle #bar { opacity: 0; pointer-events: none; }
+  body.idle { cursor: none; }
+  button, select, input[type=color] { font: inherit; }
+  .btn {
+    background: rgba(30, 38, 50, .9);
+    color: #dbe6f2;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: system-ui, sans-serif;
+  }
+  .btn:hover { background: rgba(48, 60, 78, .95); }
+
+  #panel {
+    position: fixed; top: 58px; right: 12px;
+    width: 290px;
+    background: rgba(22, 28, 38, .97);
+    color: #dbe6f2;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 14px;
+    padding: 14px;
+    font: 14px system-ui, sans-serif;
+    display: grid; gap: 11px;
+    z-index: 10;
+    max-height: calc(100vh - 80px);
+    overflow: auto;
+    user-select: auto;
+  }
+  #panel[hidden] { display: none; }
+  #panel label { display: grid; gap: 4px; }
+  #panel label.row { display: flex; align-items: center; gap: 8px; }
+  #panel select, #panel input[type=range] { width: 100%; }
+  #panel select {
+    background: #0f141b; color: #dbe6f2;
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 8px; padding: 6px;
+  }
+  .sw { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .sw button {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.25); cursor: pointer;
+  }
+  .sw input[type=color] { width: 34px; height: 28px; border: 0; background: none; padding: 0; }
+  .hint { font-size: 12px; opacity: .6; line-height: 1.4; }
+  #toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: #222c3a; color: #fff; padding: 10px 16px; border-radius: 10px;
+    font: 14px system-ui, sans-serif; opacity: 0; pointer-events: none; transition: opacity .3s;
+    z-index: 20;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="clock" title="Drag me anywhere">
+      <div id="time">--:--:--</div>
+      <div id="date"></div>
+      <div id="tzl"></div>
+    </div>
+  </div>
+
+  <div id="bar">
+    <button class="btn" id="btnSettings">⚙ Settings</button>
+    <button class="btn" id="btnFloat" title="Keep the clock on top of every other window">📌 Float on top</button>
+    <button class="btn" id="btnFull" title="Fullscreen (F)">⛶</button>
+  </div>
+
+  <div id="panel" hidden>
+    <label>Time format
+      <select id="fmt"><option value="24">24-hour</option><option value="12">12-hour (AM/PM)</option></select>
+    </label>
+    <label class="row"><input type="checkbox" id="sec"> Show seconds</label>
+    <label class="row"><input type="checkbox" id="date_on"> Show date</label>
+    <label class="row"><input type="checkbox" id="tz_on"> Show time zone name</label>
+    <label>Time zone <select id="tz"></select></label>
+    <label>Style
+      <select id="font">
+        <option value="digital">Digital (Orbitron)</option>
+        <option value="modern">Modern</option>
+        <option value="mono">Monospace</option>
+      </select>
+    </label>
+    <label>Size <input type="range" id="size" min="30" max="320"></label>
+    <label>Card opacity <input type="range" id="op" min="0" max="100"></label>
+    <div>Clock colour
+      <div class="sw" id="sw"><input type="color" id="color" title="Custom colour"></div>
+    </div>
+    <label class="row">Background <input type="color" id="bgc" style="width:34px;height:28px;border:0;background:none;padding:0"></label>
+    <button class="btn" id="reset">Reset position &amp; settings</button>
+    <div class="hint">Drag the clock to move it. <b>Float on top</b> (Chrome/Edge) pops it into a small window that stays above all your other apps. Shortcuts: <b>F</b> fullscreen, <b>S</b> settings.</div>
+  </div>
+  <div id="toast"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const clock = $('clock'), stage = $('stage');
+  // Keep direct element references: once the clock moves into the floating
+  // window, document.getElementById can no longer find these elements.
+  const timeEl = $('time'), dateEl = $('date'), tzlEl = $('tzl');
+  const DEFAULTS = { h12:false, sec:true, date:true, tzl:true, tz:'local', font:'digital',
+                     size:110, color:'#39ff88', op:.85, bg:'#0b0f14', x:.5, y:.5 };
+  const FONTS = {
+    digital: "'Orbitron', 'Segoe UI', system-ui, sans-serif",
+    modern:  "'Segoe UI', system-ui, -apple-system, Roboto, sans-serif",
+    mono:    "ui-monospace, 'SF Mono', Consolas, Menlo, monospace"
+  };
+  const COLORS = ['#39ff88','#00e5ff','#ffb300','#ff4d6d','#c77dff','#ffffff'];
+
+  function load() { try { return JSON.parse(localStorage.getItem('digital-clock')) || {}; } catch { return {}; } }
+  let S = { ...DEFAULTS, ...load() };
+  const save = () => { try { localStorage.setItem('digital-clock', JSON.stringify(S)); } catch {} };
+
+  const toast = msg => { const t = $('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 3500); };
+
+  /* ---------- appearance ---------- */
+  function applyVars(root) {
+    root.style.setProperty('--c', S.color);
+    root.style.setProperty('--bg', S.bg);
+    root.style.setProperty('--fs', S.size + 'px');
+    root.style.setProperty('--op', S.op);
+    root.style.setProperty('--font', FONTS[S.font]);
+  }
+  function applyAll() {
+    applyVars(document.documentElement);
+    const pip = window.documentPictureInPicture && documentPictureInPicture.window;
+    if (pip) applyVars(pip.document.documentElement);
+    clock.style.left = (S.x * 100) + '%';
+    clock.style.top = (S.y * 100) + '%';
+    buildFormatters();
+    dateEl.style.display = S.date ? '' : 'none';
+    tzlEl.style.display = S.tzl ? '' : 'none';
+    last = ''; tick();
+  }
+
+  /* ---------- time ---------- */
+  let timeFmt, dateFmt, last = '';
+  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  function buildFormatters() {
+    const timeZone = S.tz === 'local' ? undefined : S.tz;
+    timeFmt = new Intl.DateTimeFormat('en-US', {
+      hour: S.h12 ? 'numeric' : '2-digit', minute: '2-digit', second: '2-digit',
+      hourCycle: S.h12 ? 'h12' : 'h23', timeZone
+    });
+    dateFmt = new Intl.DateTimeFormat(undefined, {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone
+    });
+    tzlEl.textContent = (S.tz === 'local' ? localZone : S.tz).replace(/_/g, ' ');
+  }
+  function tick() {
+    const now = new Date();
+    const p = {};
+    for (const part of timeFmt.formatToParts(now)) p[part.type] = part.value;
+    let html = `${p.hour}<i>:</i>${p.minute}`;
+    if (S.sec) html += `<i>:</i>${p.second}`;
+    if (S.h12) html += `<span class="ap">${p.dayPeriod || ''}</span>`;
+    if (html !== last) {
+      last = html;
+      timeEl.innerHTML = html;
+      if (S.date) dateEl.textContent = dateFmt.format(now);
+      document.title = `${p.hour}:${p.minute}${S.sec ? ':' + p.second : ''}${S.h12 ? ' ' + (p.dayPeriod || '') : ''}`;
+    }
+  }
+  setInterval(tick, 200);
+
+  /* ---------- dragging ---------- */
+  let drag = null;
+  clock.addEventListener('pointerdown', e => {
+    if (clock.classList.contains('pip')) return;
+    drag = { px: e.clientX, py: e.clientY, x: S.x, y: S.y };
+    clock.setPointerCapture(e.pointerId);
+    clock.classList.add('dragging');
+  });
+  clock.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const W = innerWidth, H = innerHeight;
+    S.x = Math.min(.98, Math.max(.02, drag.x + (e.clientX - drag.px) / W));
+    S.y = Math.min(.98, Math.max(.02, drag.y + (e.clientY - drag.py) / H));
+    clock.style.left = (S.x * 100) + '%';
+    clock.style.top = (S.y * 100) + '%';
+  });
+  const endDrag = () => { if (drag) { drag = null; clock.classList.remove('dragging'); save(); } };
+  clock.addEventListener('pointerup', endDrag);
+  clock.addEventListener('pointercancel', endDrag);
+
+  /* ---------- settings panel ---------- */
+  const zones = (Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : ['UTC','Asia/Kolkata','Europe/London','America/New_York','Asia/Tokyo']);
+  $('tz').innerHTML = `<option value="local">Local (${localZone.replace(/_/g,' ')})</option>` +
+    zones.map(z => `<option value="${z}">${z.replace(/_/g, ' ')}</option>`).join('');
+
+  COLORS.forEach(c => {
+    const b = document.createElement('button');
+    b.style.background = c; b.title = c;
+    b.onclick = () => { S.color = c; $('color').value = c; applyAll(); save(); };
+    $('sw').insertBefore(b, $('color'));
+  });
+
+  function syncPanel() {
+    $('fmt').value = S.h12 ? '12' : '24';
+    $('sec').checked = S.sec; $('date_on').checked = S.date; $('tz_on').checked = S.tzl;
+    $('tz').value = S.tz; $('font').value = S.font;
+    $('size').value = S.size; $('op').value = Math.round(S.op * 100);
+    $('color').value = S.color; $('bgc').value = S.bg;
+  }
+  const bind = (id, fn, ev = 'input') => $(id).addEventListener(ev, () => { fn($(id)); applyAll(); save(); });
+  bind('fmt',     el => S.h12 = el.value === '12', 'change');
+  bind('sec',     el => S.sec = el.checked, 'change');
+  bind('date_on', el => S.date = el.checked, 'change');
+  bind('tz_on',   el => S.tzl = el.checked, 'change');
+  bind('tz',      el => S.tz = el.value, 'change');
+  bind('font',    el => S.font = el.value, 'change');
+  bind('size',    el => S.size = +el.value);
+  bind('op',      el => S.op = el.value / 100);
+  bind('color',   el => S.color = el.value);
+  bind('bgc',     el => S.bg = el.value);
+  $('reset').onclick = () => { S = { ...DEFAULTS }; syncPanel(); applyAll(); save(); };
+
+  const togglePanel = () => { $('panel').hidden = !$('panel').hidden; };
+  $('btnSettings').onclick = togglePanel;
+
+  /* ---------- fullscreen ---------- */
+  const toggleFull = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
+  $('btnFull').onclick = toggleFull;
+  addEventListener('keydown', e => {
+    if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'f' || e.key === 'F') toggleFull();
+    if (e.key === 's' || e.key === 'S') togglePanel();
+  });
+
+  /* ---------- float on top (Document Picture-in-Picture) ---------- */
+  $('btnFloat').onclick = async () => {
+    if (!('documentPictureInPicture' in window)) {
+      toast('Float on top needs Chrome or Edge 116+. Other browsers: use fullscreen or an app window.');
+      return;
+    }
+    const existing = documentPictureInPicture.window;
+    if (existing) { existing.close(); return; }
+    try {
+      const pip = await documentPictureInPicture.requestWindow({ width: 460, height: 170 });
+      for (const sheet of document.styleSheets) {
+        try {
+          const st = pip.document.createElement('style');
+          st.textContent = [...sheet.cssRules].map(r => r.cssText).join('\n');
+          pip.document.head.appendChild(st);
+        } catch {
+          if (sheet.href) {
+            const l = pip.document.createElement('link');
+            l.rel = 'stylesheet'; l.href = sheet.href;
+            pip.document.head.appendChild(l);
+          }
+        }
+      }
+      applyVars(pip.document.documentElement);
+      clock.classList.add('pip');
+      pip.document.body.append(clock);
+      // Tick from the floating window's own timer so the main tab being in
+      // the background can't throttle or pause the clock.
+      pip.setInterval(tick, 200);
+      tick();
+      pip.addEventListener('pagehide', () => {
+        clock.classList.remove('pip');
+        stage.append(clock);
+      });
+    } catch (err) {
+      toast('Could not open floating window: ' + err.message);
+    }
+  };
+
+  /* ---------- hide controls when idle ---------- */
+  let idleTimer;
+  const wake = () => {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { if ($('panel').hidden) document.body.classList.add('idle'); }, 3000);
+  };
+  ['mousemove', 'pointerdown', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, wake));
+  wake();
+
+  syncPanel();
+  applyAll();
+})();
+</script>
+</body>
+</html>
